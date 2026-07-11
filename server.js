@@ -214,13 +214,15 @@ app.post('/v1/chat/completions', async (req, res) => {
     }
     
   } catch (error) {
-    console.error('Proxy error:', error.message);
+    console} catch (error) {
+    console.error('Proxy error:', error.response?.data || error.message);
     
     res.status(error.response?.status || 500).json({
       error: {
-        message: error.message || 'Internal server error',
+        message: error.response?.data?.error?.message || error.message || 'Internal server error',
         type: 'invalid_request_error',
-        code: error.response?.status || 500
+        code: error.response?.status || 500,
+        nim_details: error.response?.data || null
       }
     });
   }
