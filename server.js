@@ -56,6 +56,50 @@ app.get('/v1/models', (req, res) => {
   });
 });
 
+// Helper: sleep for a given number of ms
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Helper: call NIM API with retry + exponential backoff for 429/503 errors
+async function callNimWithRetry(nimRequest, axiosConfig, maxRetries = 4) {
+  let attempt = 0;
+  let lastError;
+
+  while (attempt <= maxRetries) {
+    try {
+      return await axios.post(`${NIM_API_BASE}/chat/completions`, nimRequest, axiosConfig);
+    } catch (error) {
+      lastError = error;
+      const status = error.response?.status;
+
+      // Only retry on rate limit (429) or service unavailable (503)
+      const isRetryable = status === 429 || status === 503;
+
+      if (!isRetryable || attempt === maxRetries) {
+        throw error;
+      }
+
+      // Respect Retry-After header if present, otherwise exponential backoff + jitter
+      const retryAfterHeader = error.response?.headers?.['retry-after'];
+      let delayMs;
+      if (retryAfterHeader) {
+        delayMs = parseInt(retryAfterHeader, 10) * 1000;
+      } else {
+        const baseDelay = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s, 8s...
+        const jitter = Math.random() * 500;
+        delayMs = baseDelay + jitter;
+      }
+
+      console.warn(`NIM API returned ${status}. Retry ${attempt + 1}/${maxRetries} after ${Math.round(delayMs)}ms`);
+      await sleep(delayMs);
+      attempt++;
+    }
+  }
+
+  throw lastError;
+}
+
 // Chat completions endpoint (main proxy)
 app.post('/v1/chat/completions', async (req, res) => {
   try {
@@ -101,8 +145,8 @@ app.post('/v1/chat/completions', async (req, res) => {
       stream: stream || false
     };
     
-    // Make request to NVIDIA NIM API
-    const response = await axios.post(`${NIM_API_BASE}/chat/completions`, nimRequest, {
+    // Make request to NVIDIA NIM API (with automatic retry on 429/503)
+    const response = await callNimWithRetry(nimRequest, {
       headers: {
         'Authorization': `Bearer ${NIM_API_KEY}`,
         'Content-Type': 'application/json'
