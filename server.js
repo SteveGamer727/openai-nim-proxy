@@ -62,13 +62,16 @@ function sleep(ms) {
 }
 
 // Helper: call NIM API with retry + exponential backoff for 429/503 errors
-async function callNimWithRetry(nimRequest, axiosConfig, maxRetries = 4) {
+async function callNimWithRetry(nimRequest, axiosConfig, maxRetries = 3) {
   let attempt = 0;
   let lastError;
 
+  // Cap each individual attempt so hangs don't eat the whole Vercel time budget
+  const configWithTimeout = { ...axiosConfig, timeout: 45000 };
+
   while (attempt <= maxRetries) {
     try {
-      return await axios.post(`${NIM_API_BASE}/chat/completions`, nimRequest, axiosConfig);
+      return await axios.post(`${NIM_API_BASE}/chat/completions`, nimRequest, configWithTimeout);
     } catch (error) {
       lastError = error;
       const status = error.response?.status;
@@ -86,7 +89,7 @@ async function callNimWithRetry(nimRequest, axiosConfig, maxRetries = 4) {
       if (retryAfterHeader) {
         delayMs = parseInt(retryAfterHeader, 10) * 1000;
       } else {
-        const baseDelay = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s, 8s...
+        const baseDelay = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s...
         const jitter = Math.random() * 500;
         delayMs = baseDelay + jitter;
       }
