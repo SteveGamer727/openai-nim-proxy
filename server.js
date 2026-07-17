@@ -56,80 +56,51 @@ app.get('/v1/models', (req, res) => {
   });
 });
 
-// Fallback models to try, in order, if the primary model is degraded/unavailable
-const FALLBACK_MODELS = [
-  'deepseek-ai/deepseek-v4-pro',
-  'zai-org/GLM-5.2',
-  'openai/gpt-oss-20b'
-];
-
 // Helper: sleep for a given number of ms
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Helper: does this error mean the model itself is broken (not just rate-limited)?
-function isModelUnavailableError(error) {
-  const status = error.response?.status;
-  const detail = error.response?.data?.detail || error.response?.data?.error?.message || '';
-  return status === 400 && /degraded|cannot be invoked/i.test(detail);
-}
+// Helper: call NIM API with retry + exponential backoff for 429/503 errors
+async function callNimWithRetry(nimRequest, axiosConfig, maxRetries = 3) {
+  let attempt = 0;
+  let lastError;
 
-// Helper: call NIM API with retry (429/503) + automatic model fallback (degraded model)
-async function callNimWithRetry(nimRequest, axiosConfig, maxRetries = 1) {
-  const configWithTimeout = { ...axiosConfig, timeout: 25000 };
-  const modelsToTry = [nimRequest.model, ...FALLBACK_MODELS.filter(m => m !== nimRequest.model)];
+  // Cap each individual attempt so hangs don't eat the whole Vercel time budget
+  const configWithTimeout = { ...axiosConfig, timeout: 45000 };
 
-  for (let modelIndex = 0; modelIndex < modelsToTry.length; modelIndex++) {
-    const currentModel = modelsToTry[modelIndex];
-    const requestForThisModel = { ...nimRequest, model: currentModel };
-    let attempt = 0;
+  while (attempt <= maxRetries) {
+    try {
+      return await axios.post(`${NIM_API_BASE}/chat/completions`, nimRequest, configWithTimeout);
+    } catch (error) {
+      lastError = error;
+      const status = error.response?.status;
 
-    while (attempt <= maxRetries) {
-      try {
-        const response = await axios.post(`${NIM_API_BASE}/chat/completions`, requestForThisModel, configWithTimeout);
-        if (currentModel !== nimRequest.model) {
-          console.warn(`Fallback succeeded: ${nimRequest.model} -> ${currentModel}`);
-        }
-        return response;
-      } catch (error) {
-        const status = error.response?.status;
+      // Only retry on rate limit (429) or service unavailable (503)
+      const isRetryable = status === 429 || status === 503;
 
-        // Model itself is broken -> stop retrying this model, move to next fallback model
-        if (isModelUnavailableError(error)) {
-          console.warn(`Model ${currentModel} unavailable (degraded). Trying next fallback...`);
-          break;
-        }
-
-        // Rate limited / temporarily overloaded -> retry same model with backoff
-        const isRetryable = status === 429 || status === 503;
-        if (!isRetryable || attempt === maxRetries) {
-          // Not retryable, or out of retries for this model -> try next fallback model
-          if (modelIndex === modelsToTry.length - 1) {
-            throw error; // no more fallbacks left
-          }
-          console.warn(`Model ${currentModel} failed (status ${status}). Trying next fallback...`);
-          break;
-        }
-
-        const retryAfterHeader = error.response?.headers?.['retry-after'];
-        let delayMs;
-        if (retryAfterHeader) {
-          delayMs = parseInt(retryAfterHeader, 10) * 1000;
-        } else {
-          const baseDelay = 1000 * Math.pow(2, attempt);
-          const jitter = Math.random() * 500;
-          delayMs = baseDelay + jitter;
-        }
-
-        console.warn(`NIM API returned ${status} for ${currentModel}. Retry ${attempt + 1}/${maxRetries} after ${Math.round(delayMs)}ms`);
-        await sleep(delayMs);
-        attempt++;
+      if (!isRetryable || attempt === maxRetries) {
+        throw error;
       }
+
+      // Respect Retry-After header if present, otherwise exponential backoff + jitter
+      const retryAfterHeader = error.response?.headers?.['retry-after'];
+      let delayMs;
+      if (retryAfterHeader) {
+        delayMs = parseInt(retryAfterHeader, 10) * 1000;
+      } else {
+        const baseDelay = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s...
+        const jitter = Math.random() * 500;
+        delayMs = baseDelay + jitter;
+      }
+
+      console.warn(`NIM API returned ${status}. Retry ${attempt + 1}/${maxRetries} after ${Math.round(delayMs)}ms`);
+      await sleep(delayMs);
+      attempt++;
     }
   }
 
-  throw new Error('All models (primary + fallbacks) failed');
+  throw lastError;
 }
 
 // Chat completions endpoint (main proxy)
