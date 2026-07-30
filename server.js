@@ -76,12 +76,16 @@ function isModelUnavailableError(error) {
 }
 
 // Helper: call NIM API with retry (429/503) + automatic model fallback (degraded model)
-async function callNimWithRetry(nimRequest, axiosConfig, maxRetries = 1) {
-  const configWithTimeout = { ...axiosConfig, timeout: 25000 };
+async function callNimWithRetry(nimRequest, axiosConfig) {
   const modelsToTry = [nimRequest.model, ...FALLBACK_MODELS.filter(m => m !== nimRequest.model)];
 
   for (let modelIndex = 0; modelIndex < modelsToTry.length; modelIndex++) {
     const currentModel = modelsToTry[modelIndex];
+    const isPrimaryModel = modelIndex === 0;
+    // Give the primary/preferred model more patience before falling back
+    const maxRetries = isPrimaryModel ? 3 : 1;
+    const timeoutMs = isPrimaryModel ? 60000 : 20000;
+    const configWithTimeout = { ...axiosConfig, timeout: timeoutMs };
     const requestForThisModel = { ...nimRequest, model: currentModel };
     let attempt = 0;
 
@@ -94,17 +98,10 @@ async function callNimWithRetry(nimRequest, axiosConfig, maxRetries = 1) {
         return response;
       } catch (error) {
         const status = error.response?.status;
+        const degraded = isModelUnavailableError(error);
+        const isRetryable = status === 429 || status === 503 || (isPrimaryModel && degraded);
 
-        // Model itself is broken -> stop retrying this model, move to next fallback model
-        if (isModelUnavailableError(error)) {
-          console.warn(`Model ${currentModel} unavailable (degraded). Trying next fallback...`);
-          break;
-        }
-
-        // Rate limited / temporarily overloaded -> retry same model with backoff
-        const isRetryable = status === 429 || status === 503;
         if (!isRetryable || attempt === maxRetries) {
-          // Not retryable, or out of retries for this model -> try next fallback model
           if (modelIndex === modelsToTry.length - 1) {
             throw error; // no more fallbacks left
           }
@@ -122,7 +119,7 @@ async function callNimWithRetry(nimRequest, axiosConfig, maxRetries = 1) {
           delayMs = baseDelay + jitter;
         }
 
-        console.warn(`NIM API returned ${status} for ${currentModel}. Retry ${attempt + 1}/${maxRetries} after ${Math.round(delayMs)}ms`);
+        console.warn(`${currentModel} returned ${status}${degraded ? ' (degraded)' : ''}. Retry ${attempt + 1}/${maxRetries} after ${Math.round(delayMs)}ms`);
         await sleep(delayMs);
         attempt++;
       }
