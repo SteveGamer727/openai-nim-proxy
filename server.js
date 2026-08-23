@@ -23,7 +23,7 @@ const ENABLE_THINKING_MODE = false; // Set to true to enable chat_template_kwarg
 // Model mapping (adjust based on available NIM models)
 const MODEL_MAPPING = {
   'gpt-3.5-turbo': 'mistralai/mistral-medium-3.5-128b',  // leve e rápido, bom para respostas ágeis
-  'gpt-4': 'qwen/qwen3-coder-480b-a35b-instruct',        // mantido, forte em coding/agentic
+  'gpt-4': 'deepseek-ai/deepseek-v4-flash-0731',         // nova versão do DeepSeek Flash, adicionada de volta ao catálogo
   'gpt-4-turbo': 'zai-org/GLM-5.2',                      // multilíngue, top-tier, substitui Kimi K2 (descontinuado)
   'gpt-4o': 'nvidia/nemotron-3-super-120b-a12b',         // atualizado: DeepSeek não é mais suportado pela NVIDIA NIM
   'claude-3-opus': 'zai-org/GLM-5.2',                    // atualizado: DeepSeek V4 Pro não é mais suportado pela NVIDIA NIM
