@@ -27,7 +27,7 @@ const MODEL_MAPPING = {
   'gpt-4-turbo': 'zai-org/GLM-5.2',                      // multilíngue, top-tier, substitui Kimi K2 (descontinuado)
   'gpt-4o': 'nvidia/nemotron-3-super-120b-a12b',         // atualizado: DeepSeek não é mais suportado pela NVIDIA NIM
   'claude-3-opus': 'zai-org/GLM-5.2',                    // atualizado: DeepSeek V4 Pro não é mais suportado pela NVIDIA NIM
-  'claude-3-sonnet': 'nvidia/nemotron-3-ultra-550b-a55b',               // mantido, sólido custo-benefício
+  'claude-3-sonnet': 'nvidia/nemotron-3-ultra-550b-a55b', // atualizado
   'gemini-pro': 'qwen/qwen3-next-80b-a3b-thinking'       // mantido, bom para raciocínio passo a passo
 };
 
@@ -58,6 +58,7 @@ app.get('/v1/models', (req, res) => {
 
 // Fallback models to try, in order, if the primary model is degraded/unavailable
 const FALLBACK_MODELS = [
+  'nvidia/nemotron-3-ultra-550b-a55b',
   'zai-org/GLM-5.2',
   'qwen/qwen3-coder-480b-a35b-instruct',
   'openai/gpt-oss-20b'
